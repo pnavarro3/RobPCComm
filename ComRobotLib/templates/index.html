@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Robot Arena</title>
+    <style>
+        body { font-family: Arial; text-align: center; }
+        .robot { margin: 10px; padding: 10px; border: 1px solid #ccc; }
+    </style>
+</head>
+<body>
+    <h1>Robot Arena</h1>
+
+    <!-- Video -->
+    <img src="{{ url_for('video_feed') }}" width="640" height="480">
+
+    <h2>Estados de los Robots</h2>
+    {% for rid, state in states.items() %}
+        <div class="robot">
+            <strong>Robot {{ rid }}</strong>: {{ state }}
+        </div>
+    {% endfor %}
+
+    <h2>Controles</h2>
+    <a href="{{ url_for('start_fight') }}"><button>Iniciar Pelea</button></a>
+    <a href="{{ url_for('stop_fight') }}"><button>Parar Pelea</button></a>
+</body>
+</html>
