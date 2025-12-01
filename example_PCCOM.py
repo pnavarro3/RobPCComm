@@ -26,7 +26,7 @@ def comm_loop():
         # Intentar recibir respuesta durante 300 ms
         start = time.time()
         while time.time() - start < 0.3:
-            robot_comm.recibirRespuesta()
+            msg = robot_comm.recibirRespuesta()
 
         # Avanzar al siguiente robot
         i += 1
