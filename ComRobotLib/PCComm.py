@@ -4,7 +4,83 @@ import time
 import cv2
 from flask import Flask, render_template, Response, redirect, url_for
 
-# --- CLASE --- #
+
+class Interface:
+    """Clase para manejar la interfaz web Flask del sistema de robots."""
+    
+    def __init__(self, robot_comm):
+        """
+        Inicializa la interfaz web.
+        
+        Args:
+            robot_comm: Instancia de RobotComm para acceder a estados y log
+        """
+        self.robot_comm = robot_comm
+        self.current_frame = None
+        
+        # Flask
+        self.app = Flask(__name__)
+        self._setup_routes()
+    
+    def update_frame(self, frame):
+        """
+        Actualiza el frame actual para el streaming.
+        
+        Args:
+            frame: Frame de OpenCV (numpy array) a mostrar
+        """
+        self.current_frame = frame
+    
+    def gen_frames(self):
+        """Generador de frames para el streaming de video."""
+        while True:
+            if self.current_frame is not None:
+                ret, buffer = cv2.imencode('.jpg', self.current_frame)
+                if ret:
+                    frame = buffer.tobytes()
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+            time.sleep(0.033)  # ~30 FPS
+    
+    def _setup_routes(self):
+        """Configura las rutas de Flask."""
+        @self.app.route('/')
+        def index():
+            return render_template('index.html', 
+                                   states=self.robot_comm.robot_states,
+                                   comm_status=self.robot_comm.robot_comm_status)
+
+        @self.app.route('/video_feed')
+        def video_feed():
+            return Response(self.gen_frames(),
+                            mimetype='multipart/x-mixed-replace; boundary=frame')
+
+        @self.app.route('/start')
+        def start_fight():
+            for rid in self.robot_comm.robot_states:
+                self.robot_comm.robot_states[rid] = "peleando"
+            self.robot_comm.log("PELEA →", "Se inició la pelea")
+            return redirect(url_for('index'))
+
+        @self.app.route('/stop')
+        def stop_fight():
+            for rid in self.robot_comm.robot_states:
+                self.robot_comm.robot_states[rid] = "fuera de combate"
+            self.robot_comm.log("PELEA →", "Se detuvo la pelea")
+            return redirect(url_for('index'))
+    
+    def run_server(self, host="0.0.0.0", port=5000, debug=True):
+        """
+        Inicia el servidor Flask.
+        
+        Args:
+            host: Host donde correrá el servidor
+            port: Puerto donde correrá el servidor
+            debug: Modo debug de Flask
+        """
+        self.app.run(host=host, port=port, debug=debug)
+
+
 class RobotComm:
 
     # - Metodo constructor - #
@@ -14,12 +90,27 @@ class RobotComm:
         self.PORT = port
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        self.sock.bind(("", port))
+        # Permitir reutilizar la dirección/puerto
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            self.sock.bind(("", port))
+        except OSError as e:
+            print(f"[ERROR] No se pudo vincular el puerto {port}: {e}")
+            print(f"[INFO] Intentando cerrar conexiones existentes...")
+            self.sock.close()
+            # Crear nuevo socket con las mismas opciones
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.sock.bind(("", port))
+            print(f"[OK] Puerto {port} vinculado correctamente")
+        
         self.sock.settimeout(timeout)
 
         # Atributos Robots registrados y estados
         self.robots = []
-        self.robot_states = {}
+        self.robot_states = {}  #id: estado de combate
+        self.robot_comm_status = {}  #id: estado de comunicación (True/False)
         self.logfile = logfile
 
         # Respuestas
@@ -29,12 +120,9 @@ class RobotComm:
         # Webcam
         self.camera = cv2.VideoCapture(0)
 
-        # Flask
-        self.app = Flask(__name__)
-        self._setup_routes()
-
 
     # - Metodo escribir datalog - #
+    # DATALOG
     def log(self, tipo, mensaje):
         """
         Descripcion: Esta funcion crea el datalog con los datos
@@ -58,8 +146,20 @@ class RobotComm:
         if robot_id not in self.robots:
             self.robots.append(robot_id)
             self.robot_states[robot_id] = "esperando"
+            self.robot_comm_status[robot_id] = True  # Por defecto comunicación OK
             print(f"[REGISTRADO] Robot ID {robot_id}")
             self.log("REGISTRO →", f"Robot {robot_id}")
+    
+    def update_comm_status(self, robot_id, comm_ok):
+        """
+        Actualiza el estado de comunicación de un robot.
+        
+        Args:
+            robot_id: ID del robot
+            comm_ok: True si la comunicación es correcta, False si hay error
+        """
+        if robot_id in self.robots:
+            self.robot_comm_status[robot_id] = comm_ok
 
     # - Metodo enviar comando robot por UDP - #
     def enviarRobot(self, id_robot, ang, dist, out):
@@ -92,48 +192,18 @@ class RobotComm:
         """
         try:
             data, addr = self.sock.recvfrom(1024)
-            self.respuesta = data.decode(errors="ignore").strip()
-            if self.respuesta.startswith("OK"):
-                print(f"[RESPUESTA ← ESP] {self.respuesta}")
-                self.log("RECIBIDO ←", self.respuesta)
-
+            msg = data.decode(errors="ignore").strip()
+            if msg.startswith("OK"):
+                print(f"[RESPUESTA ← ESP] {msg}")
+                self.log("RECIBIDO ←", msg)
+                return True
+            else:
+                return False
         except socket.timeout:
             print("Respuesta no recibida")
 
-    def gen_frames(self):
-        while True:
-            success, frame = self.camera.read()
-            if not success:
-                break
-            else:
-                ret, buffer = cv2.imencode('.jpg', frame)
-                frame = buffer.tobytes()
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-
-    def _setup_routes(self):
-        @self.app.route('/')
-        def index():
-            return render_template('index.html', states=self.robot_states)
-
-        @self.app.route('/video_feed')
-        def video_feed():
-            return Response(self.gen_frames(),
-                            mimetype='multipart/x-mixed-replace; boundary=frame')
-
-        @self.app.route('/start')
-        def start_fight():
-            for rid in self.robot_states:
-                self.robot_states[rid] = "peleando"
-            self.log("PELEA →", "Se inició la pelea")
-            return redirect(url_for('index'))
-
-        @self.app.route('/stop')
-        def stop_fight():
-            for rid in self.robot_states:
-                self.robot_states[rid] = "fuera de combate"
-            self.log("PELEA →", "Se detuvo la pelea")
-            return redirect(url_for('index'))
-
-    def run_server(self, host="0.0.0.0", port=5000):
-        self.app.run(host=host, port=port, debug=True)
+    def close(self):
+        """Cierra el socket correctamente."""
+        if hasattr(self, 'sock'):
+            self.sock.close()
+            print("[CERRADO] Socket UDP cerrado")
