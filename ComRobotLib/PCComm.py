@@ -170,6 +170,7 @@ class RobotComm:
         """
         if self.respuesta or self.mensaje_inicial:
             self.mensaje_inicial = False
+            self.respuesta = False
 
             if id_robot not in self.robots:
                 msg = f"[ERROR] Robot ID {id_robot} no está registrado. Ignorando mensaje."
@@ -196,6 +197,7 @@ class RobotComm:
             if msg.startswith("OK"):
                 print(f"[RESPUESTA ← ESP] {msg}")
                 self.log("RECIBIDO ←", msg)
+                self.respuesta = True
                 return True
             else:
                 return False
