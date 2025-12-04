@@ -84,7 +84,7 @@ class Interface:
 class RobotComm:
 
     # - Metodo constructor - #
-    def __init__(self, ip="255.255.255.255", port=8888, timeout=0.2, logfile="datalog.txt"):
+    def __init__(self, ip="255.255.255.255", port=8888, timeout=1, logfile="datalog.txt"):
         # Atributos Comunicación UDP
         self.IP = ip
         self.PORT = port
@@ -93,7 +93,7 @@ class RobotComm:
         # Permitir reutilizar la dirección/puerto
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            self.sock.bind(("", port))
+            self.sock.bind((ip, port))
         except OSError as e:
             print(f"[ERROR] No se pudo vincular el puerto {port}: {e}")
             print(f"[INFO] Intentando cerrar conexiones existentes...")
@@ -168,6 +168,8 @@ class RobotComm:
         Args: id_robot, angulo, distancia, in/out
         Returns: None
         """
+        print(f"Mensaje inicial: {self.mensaje_inicial}\n")
+        print(f"Respuesta: {self.respuesta}")
         if self.respuesta or self.mensaje_inicial:
             self.mensaje_inicial = False
             self.respuesta = False
@@ -183,6 +185,7 @@ class RobotComm:
 
             print(f"[ENVIADO → Robot {id_robot}] {msg}")
             self.log("ENVIADO →", msg)
+        
 
     # - Metodo recibir respuesta robot por UDP - #
     def recibirRespuesta(self):
@@ -192,17 +195,22 @@ class RobotComm:
         Returns: None
         """
         try:
-            data, addr = self.sock.recvfrom(1024)
+            data, addr = self.sock.recvfrom(2048)
             msg = data.decode(errors="ignore").strip()
-            if msg.startswith("OK"):
-                print(f"[RESPUESTA ← ESP] {msg}")
-                self.log("RECIBIDO ←", msg)
-                self.respuesta = True
-                return True
-            else:
-                return False
+
+            while not msg.startswith("OK"):
+                data, addr = self.sock.recvfrom(2048)
+                msg = data.decode(errors="ignore").strip()
+
+            print(msg)
+            print(f"[RESPUESTA ← ESP] {msg}")
+            self.log("RECIBIDO ←", msg)
+            self.respuesta = True
+            return True
+            
         except socket.timeout:
             print("Respuesta no recibida")
+            return False
 
     def close(self):
         """Cierra el socket correctamente."""
