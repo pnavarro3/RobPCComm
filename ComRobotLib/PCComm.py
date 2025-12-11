@@ -168,11 +168,11 @@ class RobotComm:
         Args: id_robot, angulo, distancia, in/out
         Returns: None
         """
-        print(f"Mensaje inicial: {self.mensaje_inicial}\n")
+        print(f"Mensaje inicial: {self.mensaje_inicial}\n") 
         print(f"Respuesta: {self.respuesta}")
         if self.respuesta or self.mensaje_inicial:
             self.mensaje_inicial = False
-            self.respuesta = False
+            self.respuesta = True # Evitar que se quede bloqueado si no hay respuesta
 
             if id_robot not in self.robots:
                 msg = f"[ERROR] Robot ID {id_robot} no está registrado. Ignorando mensaje."
