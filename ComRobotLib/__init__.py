@@ -1,1 +1,1 @@
-from .PCComm import RobotComm, Interface
+from .PCComm import RobotComm
