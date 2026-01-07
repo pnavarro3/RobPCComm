@@ -70,7 +70,7 @@ class RobotComm:
         if robot_id in self.robots:
             self.robot_comm_status[robot_id] = comm_ok
 
-    # - Metodo enviar comando robot por UDP - #
+    # - Metodo enviar comando robot por TCP - #
     def enviarRobot(self, id_robot, ang, dist, out):
         """
         Descripcion: Esta funcion envia un mensaje al robot maestro por UDP, indicando el id del robot de destino
@@ -90,7 +90,7 @@ class RobotComm:
         self.log("ENVIADO ->", msg_bytes)
         
 
-    # - Metodo recibir respuesta robot por UDP - #
+    # - Metodo recibir respuesta robot por TCP - #
     def recibirRespuesta(self):
         """
         Descripcion: Esta funcion gestiona la respuesta recibida del maestro
@@ -114,4 +114,4 @@ class RobotComm:
         """Cierra el socket correctamente."""
         if hasattr(self, 'sock'):
             self.sock.close()
-            print("[CERRADO] Socket UDP cerrado")
+            print("[CERRADO] Socket TCP cerrado")
