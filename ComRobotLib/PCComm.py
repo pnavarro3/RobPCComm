@@ -1,10 +1,16 @@
+# !/usr/bin/env python3
+# Autor: Ruben Sahuquillo y Pablo Navarro
+# Libreria de comunicacion con modulos robot utilizando TCP y gestion de interfaz web con Flask.
+
+
 # --- LIBRERIAS --- #
 import socket
 import time
 import cv2
 from flask import Flask, render_template, Response, redirect, url_for
+import struct
 
-
+# --- CLASE INTERFAZ FLASK --- #
 class Interface:
     """Clase para manejar la interfaz web Flask del sistema de robots."""
     
@@ -59,14 +65,14 @@ class Interface:
         def start_fight():
             for rid in self.robot_comm.robot_states:
                 self.robot_comm.robot_states[rid] = "peleando"
-            self.robot_comm.log("PELEA →", "Se inició la pelea")
+            self.robot_comm.log("PELEA ->", "Se inició la pelea")
             return redirect(url_for('index'))
 
         @self.app.route('/stop')
         def stop_fight():
             for rid in self.robot_comm.robot_states:
                 self.robot_comm.robot_states[rid] = "fuera de combate"
-            self.robot_comm.log("PELEA →", "Se detuvo la pelea")
+            self.robot_comm.log("PELEA ->", "Se detuvo la pelea")
             return redirect(url_for('index'))
     
     def run_server(self, host="0.0.0.0", port=5000, debug=True):
@@ -81,41 +87,23 @@ class Interface:
         self.app.run(host=host, port=port, debug=debug)
 
 
+# --- CLASE COMUNICACION ROBOT --- #
 class RobotComm:
 
     # - Metodo constructor - #
-    def __init__(self, ip="255.255.255.255", port=8888, timeout=0.2, logfile="datalog.txt"):
-        # Atributos Comunicación UDP
+    def __init__(self, ip="10.74.94.237", port=8888, timeout=1, logfile="datalog.txt"):
+        # Atributos Comunicación TCP
         self.IP = ip
         self.PORT = port
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        # Permitir reutilizar la dirección/puerto
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            self.sock.bind(("", port))
-        except OSError as e:
-            print(f"[ERROR] No se pudo vincular el puerto {port}: {e}")
-            print(f"[INFO] Intentando cerrar conexiones existentes...")
-            self.sock.close()
-            # Crear nuevo socket con las mismas opciones
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.sock.bind(("", port))
-            print(f"[OK] Puerto {port} vinculado correctamente")
-        
-        self.sock.settimeout(timeout)
+        self._client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._client.connect((self.IP, self.PORT))
 
         # Atributos Robots registrados y estados
         self.robots = []
         self.robot_states = {}  #id: estado de combate
         self.robot_comm_status = {}  #id: estado de comunicación (True/False)
         self.logfile = logfile
-
-        # Respuestas
-        self.respuesta = None
-        self.mensaje_inicial = True
+        self.actual_id = None
 
         # Webcam
         self.camera = cv2.VideoCapture(0)
@@ -146,9 +134,9 @@ class RobotComm:
         if robot_id not in self.robots:
             self.robots.append(robot_id)
             self.robot_states[robot_id] = "esperando"
-            self.robot_comm_status[robot_id] = True  # Por defecto comunicación OK
+            self.robot_comm_status[robot_id] = True
             print(f"[REGISTRADO] Robot ID {robot_id}")
-            self.log("REGISTRO →", f"Robot {robot_id}")
+            self.log("REGISTRO ->", f"Robot {robot_id}")
     
     def update_comm_status(self, robot_id, comm_ok):
         """
@@ -166,23 +154,20 @@ class RobotComm:
         """
         Descripcion: Esta funcion envia un mensaje al robot maestro por UDP, indicando el id del robot de destino
         Args: id_robot, angulo, distancia, in/out
-        Returns: None
         """
-        if self.respuesta or self.mensaje_inicial:
-            self.mensaje_inicial = False
-            self.respuesta = False
+        self.actual_id = id_robot
+        if id_robot not in self.robots:
+            msg = f"[ERROR] Robot ID {id_robot} no está registrado. Ignorando mensaje."
+            print(msg)
+            self.log("ERROR ->", msg)
+            return
 
-            if id_robot not in self.robots:
-                msg = f"[ERROR] Robot ID {id_robot} no está registrado. Ignorando mensaje."
-                print(msg)
-                self.log("ERROR →", msg)
-                return
-
-            msg = f"id={id_robot}, ang={ang}, dist={dist}, Out={out}"
-            self.sock.sendto(msg.encode(), (self.IP, self.PORT))
-
-            print(f"[ENVIADO → Robot {id_robot}] {msg}")
-            self.log("ENVIADO →", msg)
+        msg_bytes = struct.pack('Iff?', id_robot, ang, dist, out)
+        self._client.send(msg_bytes)
+        
+        print(f"[ENVIADO -> Robot {id_robot}] id={id_robot}, ang={ang}, dist={dist}, out={out}")
+        self.log("ENVIADO ->", msg_bytes)
+        
 
     # - Metodo recibir respuesta robot por UDP - #
     def recibirRespuesta(self):
@@ -192,17 +177,17 @@ class RobotComm:
         Returns: None
         """
         try:
-            data, addr = self.sock.recvfrom(1024)
-            msg = data.decode(errors="ignore").strip()
-            if msg.startswith("OK"):
-                print(f"[RESPUESTA ← ESP] {msg}")
-                self.log("RECIBIDO ←", msg)
-                self.respuesta = True
+            self._client.settimeout(1)
+            response = self._client.recv(1024)
+            self._client.settimeout(None)
+
+            if response:
+                print(f"Response -> {response.decode(errors='ignore')}")
                 return True
-            else:
-                return False
-        except socket.timeout:
-            print("Respuesta no recibida")
+            return False
+        except socket.timeout as e:
+            print(f"Tiempo de espera agotado esperando al robot {self.actual_id}")
+            return False
 
     def close(self):
         """Cierra el socket correctamente."""
